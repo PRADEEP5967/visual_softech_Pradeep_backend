@@ -1,0 +1,179 @@
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using WebApplication3.Data;
+using WebApplication3.DTOs;
+using WebApplication3.Models;
+namespace WebApplication3.Controllers
+{
+    [Authorize]
+    [ApiController]
+    [Route("api/[controller]")]
+    [Authorize]
+    public class StudentsController : ControllerBase
+    {
+
+        private readonly ApplicationDbContext _db;
+        private readonly IWebHostEnvironment _env;
+
+
+        public StudentsController(ApplicationDbContext db, IWebHostEnvironment env)
+        {
+            _db = db;
+            _env = env;
+        }
+
+
+        // GET: api/students
+        [HttpGet]
+        public async Task<IActionResult> GetAll()
+        {
+            var students = await _db.Students
+                .Include(s => s.Subjects)
+                .Include(s => s.Photos)
+                .AsNoTracking()
+                .ToListAsync();
+            return Ok(students);
+        }
+
+
+
+        // GET: api/students/5
+        [HttpGet("{id:int}")]
+        public async Task<IActionResult> Get(int id)
+        {
+            var student = await _db.Students
+                .Include(s => s.Subjects)
+                .Include(s => s.Photos)
+                .SingleOrDefaultAsync(s => s.Id == id);
+
+            if (student == null) return NotFound();
+            return Ok(student);
+        }
+
+        // POST: api/students
+        [HttpPost]
+        public async Task<IActionResult> Create([FromBody] StudentCreateDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var student = new Student
+            {
+                Name = dto.Name,
+                Age = dto.Age,
+                DateOfBirth = dto.DateOfBirth,
+                Address = dto.Address,
+                State = dto.State,
+                PhoneNumber = dto.PhoneNumber,
+            };
+
+            foreach (var sub in dto.Subjects)
+            {
+                student.Subjects.Add(new Subject { Name = sub.Name });
+            }
+
+            _db.Students.Add(student);
+            await _db.SaveChangesAsync();
+
+            return CreatedAtAction(nameof(Get), new { id = student.Id }, student);
+        }
+
+
+        // PUT: api/students/5
+        [HttpPut("{id:int}")]
+        public async Task<IActionResult> Update(int id, [FromBody] StudentUpdateDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            var student = await _db.Students
+                .Include(s => s.Subjects)
+                .SingleOrDefaultAsync(s => s.Id == id);
+            if (student == null) return NotFound();
+
+            student.Name = dto.Name;
+            student.Age = dto.Age;
+            student.DateOfBirth = dto.DateOfBirth;
+            student.Address = dto.Address;
+            student.State = dto.State;
+            student.PhoneNumber = dto.PhoneNumber;
+
+            // Reconcile subjects:
+            // Simple approach: clear existing and add from DTO
+            student.Subjects.Clear();
+            foreach (var subDto in dto.Subjects)
+            {
+                student.Subjects.Add(new Subject { Name = subDto.Name });
+            }
+
+            await _db.SaveChangesAsync();
+            return NoContent();
+        }
+
+        // DELETE: api/students/5
+        [HttpDelete("{id:int}")]
+        public async Task<IActionResult> Delete(int id)
+        {
+            var student = await _db.Students.FindAsync(id);
+            if (student == null) return NotFound();
+
+            _db.Students.Remove(student);
+            await _db.SaveChangesAsync();
+            // optionally delete folder of files
+            var folder = Path.Combine(_env.WebRootPath ?? "wwwroot", "uploads", "students", id.ToString());
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+
+            return NoContent();
+        }
+
+
+
+        // POST: api/students/{id}/photos
+        // multipart/form-data { files: ... }
+        [HttpPost("{id:int}/photos")]
+        public async Task<IActionResult> UploadPhotos(int id, IFormFileCollection files)
+        {
+            var student = await _db.Students.Include(s => s.Photos).SingleOrDefaultAsync(s => s.Id == id);
+            if (student == null) return NotFound();
+
+            if (files == null || files.Count == 0) return BadRequest(new { error = "No files uploaded" });
+
+            var uploadDir = Path.Combine(_env.WebRootPath ?? "wwwroot", "uploads", "students", id.ToString());
+            Directory.CreateDirectory(uploadDir);
+
+            foreach (var file in files)
+            {
+                if (file.Length <= 0) continue;
+                var sanitized = Path.GetFileName(file.FileName);
+                var unique = $"{Guid.NewGuid()}_{sanitized}";
+                var filepath = Path.Combine(uploadDir, unique);
+                using (var stream = new FileStream(filepath, FileMode.Create))
+                {
+                    await file.CopyToAsync(stream);
+                }
+                var relativePath = Path.Combine("uploads", "students", id.ToString(), unique).Replace("\\", "/");
+                var photo = new StudentPhoto { FileName = unique, FilePath = "/" + relativePath, StudentId = id };
+                student.Photos.Add(photo);
+            }
+
+            await _db.SaveChangesAsync();
+            return Ok(student.Photos);
+        }
+
+        // DELETE single photo
+        [HttpDelete("{id:int}/photos/{photoId:int}")]
+        public async Task<IActionResult> DeletePhoto(int id, int photoId)
+        {
+            var photo = await _db.StudentPhotos.SingleOrDefaultAsync(p => p.Id == photoId && p.StudentId == id);
+            if (photo == null) return NotFound();
+
+            // delete file
+            var fullPath = Path.Combine(_env.WebRootPath ?? "wwwroot", photo.FilePath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+            if (System.IO.File.Exists(fullPath)) System.IO.File.Delete(fullPath);
+
+            _db.StudentPhotos.Remove(photo);
+            await _db.SaveChangesAsync();
+
+            return NoContent();
+        }
+
+    }
+}
