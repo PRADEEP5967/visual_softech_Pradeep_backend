@@ -13,16 +13,6 @@
 ✔ Pagination
 ✔ Image upload notes
 
----
-
-# ✅ **README.md (Backend Repository)**
-
-### File: `README.md`
-
-Copy–paste the full content below 👇
-
----
-
 # 📘 **Student Management System – Backend (.NET + SQL Server + JWT)**
 
 This is the **backend API** for the Student Management System built for the Visual Softech assignment.
